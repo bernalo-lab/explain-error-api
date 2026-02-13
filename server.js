@@ -37,7 +37,7 @@ app.post("/v1/explain-error", (req, res) => {
 
   if (text.includes("etimedout") || text.includes("timeout")) {
     classification = "network/timeout";
-  };
+  }
 
   
   //if (/timeout|timed out|ETIMEDOUT/i.test(raw + stack)) classification = "network/timeout";
