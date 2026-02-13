@@ -70,7 +70,7 @@ app.post("/v1/explain-error", (req, res) => {
   const confidence = classification === "unknown" ? 0.35 : 0.72;
 
   // Evidence type is explicit (your “trust signal” angle)
-  evidence: [
+  const evidence: [
      { type: "keyword_match", value: "ETIMEDOUT", weight: 0.4 },
      { type: "heuristic", value: "timeout pattern", weight: 0.32 }
   ]
