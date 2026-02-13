@@ -60,20 +60,33 @@ app.post("/v1/explain-error", (req, res) => {
   else if (/out of memory|heap/i.test(raw + stack)) classification = "runtime/memory";
   else if (/syntaxerror|unexpected token/i.test(raw + stack)) classification = "runtime/syntax";
 
+  // Sevirity
+  let severity = "low";
+  if (classification.startsWith("network/timeout")) severity = "medium";
+  if (classification.startsWith("auth/")) severity = "high";
+  if (classification.startsWith("runtime/memory")) severity = "high";
+
   // Confidence is deliberately conservative for MVP
   const confidence = classification === "unknown" ? 0.35 : 0.72;
 
   // Evidence type is explicit (your “trust signal” angle)
-  const evidenceType =
-    classification === "unknown"
-      ? ["weak_pattern_match"]
-      : ["pattern_match", "stack_trace_marker"];
+  evidence: [
+     { type: "keyword_match", value: "ETIMEDOUT", weight: 0.4 },
+     { type: "heuristic", value: "timeout pattern", weight: 0.32 }
+  ]
+
+  //const evidenceType =
+  //  classification === "unknown"
+  //    ? ["weak_pattern_match"]
+  //    : ["pattern_match", "stack_trace_marker"];
 
   // Action signal mapping
   let actionSignal = "review";
   if (classification.startsWith("auth/")) actionSignal = "escalate";
   if (classification.startsWith("runtime/syntax")) actionSignal = "review";
   if (classification.startsWith("network/timeout")) actionSignal = "review";
+
+  let confidenceRationale = "Matched timeout keyword in error text.";
 
   // Explanation + next step (keep short)
   const explanationMap = {
@@ -99,7 +112,9 @@ app.post("/v1/explain-error", (req, res) => {
   res.json({
     classification,
     confidence,
-    evidenceType,
+    confidenceRationale,
+    severity,
+    evidence,
     actionSignal,
     explanation: explanationMap[classification] || explanationMap.unknown,
     recommendedNextStep: nextStepMap[classification] || nextStepMap.unknown
