@@ -17,6 +17,11 @@ app.use(
   })
 );
 
+// Adding a friendly GET / route
+app.get("/", (req, res) => {
+  res.status(200).send("ExplainError API is running. Try GET /health or POST /v1/explain-error");
+});
+
 // Health check (useful for Render)
 app.get("/health", (req, res) => res.json({ ok: true }));
 
