@@ -27,7 +27,16 @@ app.get("/health", (req, res) => res.json({ ok: true }));
 
 // MVP endpoint expected by your static page
 app.post("/v1/explain-error", (req, res) => {
-  const raw = String(req.body?.rawError || "");
+  // const raw = String(req.body?.rawError || "");
+
+  const raw = String(
+    req.body?.text ||
+    req.body?.rawError ||
+    req.body?.error ||
+    req.body?.message ||
+    ""
+  );
+  
   const stack = String(req.body?.stack || "");
 
   console.log("Incoming body:", req.body);
