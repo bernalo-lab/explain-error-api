@@ -31,8 +31,18 @@ app.post("/v1/explain-error", (req, res) => {
   const stack = String(req.body?.stack || "");
 
   // ---- ultra-simple classification heuristics (MVP) ----
+  const text = (raw + " " + stack).toLowerCase();
+
   let classification = "unknown";
-  if (/timeout|timed out|ETIMEDOUT/i.test(raw + stack)) classification = "network/timeout";
+
+  if (text.includes("etimedout") || text.includes("timeout")) {
+    classification = "network/timeout";
+  };
+
+  
+  //if (/timeout|timed out|ETIMEDOUT/i.test(raw + stack)) classification = "network/timeout";
+
+  
   else if (/ECONNREFUSED|connection refused/i.test(raw + stack)) classification = "network/connection_refused";
   else if (/permission|unauthorized|forbidden|401|403/i.test(raw + stack)) classification = "auth/permission";
   else if (/cannot find module|module not found/i.test(raw + stack)) classification = "runtime/dependency";
