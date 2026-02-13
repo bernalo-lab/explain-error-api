@@ -30,6 +30,8 @@ app.post("/v1/explain-error", (req, res) => {
   const raw = String(req.body?.rawError || "");
   const stack = String(req.body?.stack || "");
 
+  console.log("Incoming body:", req.body);
+
   // ---- ultra-simple classification heuristics (MVP) ----
   const text = (raw + " " + stack).toLowerCase();
 
