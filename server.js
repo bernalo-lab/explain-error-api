@@ -45,40 +45,40 @@ app.post("/v1/explain-error", (req, res) => {
   const text = (raw + " " + stack).toLowerCase();
 
   let classification = "unknown";
+  let confidence = 0.35;
 
   if (text.includes("etimedout") || text.includes("timeout")) {
     classification = "network/timeout";
+    confidence = 0.72;
   }
-
-  
-  //if (/timeout|timed out|ETIMEDOUT/i.test(raw + stack)) classification = "network/timeout";
-
-  
   else if (/ECONNREFUSED|connection refused/i.test(raw + stack)) classification = "network/connection_refused";
   else if (/permission|unauthorized|forbidden|401|403/i.test(raw + stack)) classification = "auth/permission";
   else if (/cannot find module|module not found/i.test(raw + stack)) classification = "runtime/dependency";
   else if (/out of memory|heap/i.test(raw + stack)) classification = "runtime/memory";
   else if (/syntaxerror|unexpected token/i.test(raw + stack)) classification = "runtime/syntax";
 
-  // Sevirity
+  // Severity
   let severity = "low";
   if (classification.startsWith("network/timeout")) severity = "medium";
   if (classification.startsWith("auth/")) severity = "high";
   if (classification.startsWith("runtime/memory")) severity = "high";
 
   // Confidence is deliberately conservative for MVP
-  const confidence = classification === "unknown" ? 0.35 : 0.72;
+  //const confidence = classification === "unknown" ? 0.35 : 0.72;
 
   // Evidence type is explicit (your “trust signal” angle)
-  const evidence: [
-     { type: "keyword_match", value: "ETIMEDOUT", weight: 0.4 },
-     { type: "heuristic", value: "timeout pattern", weight: 0.32 }
-  ]
+  // Build evidence based on what matched
+  const evidence = [];
 
-  //const evidenceType =
-  //  classification === "unknown"
-  //    ? ["weak_pattern_match"]
-  //    : ["pattern_match", "stack_trace_marker"];
+  if (text.includes("etimedout")) {
+    evidence.push({ type: "keyword_match", value: "ETIMEDOUT", weight: 0.4 });
+  }
+  if (text.includes("timeout")) {
+    evidence.push({ type: "keyword_match", value: "timeout", weight: 0.25 });
+  }
+  if (classification === "network/timeout") {
+    evidence.push({ type: "heuristic", value: "timeout pattern", weight: 0.32 });
+  }
 
   // Action signal mapping
   let actionSignal = "review";
