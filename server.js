@@ -39,54 +39,138 @@ app.post("/v1/explain-error", (req, res) => {
   
   const stack = String(req.body?.stack || "");
 
-  console.log("Incoming body:", req.body);
+  console.log("Incoming:", { hasText: !!req.body?.text, hasContext: !!req.body?.context });
 
-  // ---- ultra-simple classification heuristics (MVP) ----
-  const text = (raw + " " + stack).toLowerCase();
 
-  let classification = "unknown";
-  let confidence = 0.35;
+// star here
+// ---- classification heuristics (MVP) ----
+const text = (raw + " " + stack).toLowerCase();
 
-  if (text.includes("etimedout") || text.includes("timeout")) {
-    classification = "network/timeout";
-    confidence = 0.72;
-  }
-  else if (/ECONNREFUSED|connection refused/i.test(raw + stack)) classification = "network/connection_refused";
-  else if (/permission|unauthorized|forbidden|401|403/i.test(raw + stack)) classification = "auth/permission";
-  else if (/cannot find module|module not found/i.test(raw + stack)) classification = "runtime/dependency";
-  else if (/out of memory|heap/i.test(raw + stack)) classification = "runtime/memory";
-  else if (/syntaxerror|unexpected token/i.test(raw + stack)) classification = "runtime/syntax";
+let classification = "unknown";
+let confidence = 0.35;
+let severity = "low";
+let actionSignal = "review";
+let confidenceRationale = "Insufficient signal to classify confidently.";
+const evidence = [];
 
-  // Severity
-  let severity = "low";
-  if (classification.startsWith("network/timeout")) severity = "medium";
-  if (classification.startsWith("auth/")) severity = "high";
-  if (classification.startsWith("runtime/memory")) severity = "high";
+// Helpers
+const addEvidence = (type, value, weight) => evidence.push({ type, value, weight });
+const setOutcome = (cls, conf, sev, action, rationale) => {
+  classification = cls;
+  confidence = conf;
+  severity = sev;
+  actionSignal = action;
+  confidenceRationale = rationale;
+};
 
-  // Confidence is deliberately conservative for MVP
-  //const confidence = classification === "unknown" ? 0.35 : 0.72;
+// 1) Network timeout (ETIMEDOUT / timeout)
+if (text.includes("etimedout") || text.includes("timed out") || text.includes("timeout")) {
+  setOutcome(
+    "network/timeout",
+    0.72,
+    "medium",
+    "review",
+    "Matched timeout markers (ETIMEDOUT/timeout) in error text."
+  );
+  if (text.includes("etimedout")) addEvidence("keyword_match", "ETIMEDOUT", 0.40);
+  if (text.includes("timed out")) addEvidence("keyword_match", "timed out", 0.25);
+  if (text.includes("timeout")) addEvidence("keyword_match", "timeout", 0.20);
+  addEvidence("heuristic", "timeout pattern", 0.32);
+}
 
-  // Evidence type is explicit (your “trust signal” angle)
-  // Build evidence based on what matched
-  const evidence = [];
+// 2) Connection refused (ECONNREFUSED / connection refused)
+else if (text.includes("econnrefused") || text.includes("connection refused")) {
+  setOutcome(
+    "network/connection_refused",
+    0.78,
+    "high",
+    "review",
+    "Matched connection refusal markers (ECONNREFUSED/connection refused)."
+  );
+  if (text.includes("econnrefused")) addEvidence("keyword_match", "ECONNREFUSED", 0.45);
+  if (text.includes("connection refused")) addEvidence("keyword_match", "connection refused", 0.30);
+  addEvidence("heuristic", "socket connect failure", 0.25);
+}
 
-  if (text.includes("etimedout")) {
-    evidence.push({ type: "keyword_match", value: "ETIMEDOUT", weight: 0.4 });
-  }
-  if (text.includes("timeout")) {
-    evidence.push({ type: "keyword_match", value: "timeout", weight: 0.25 });
-  }
-  if (classification === "network/timeout") {
-    evidence.push({ type: "heuristic", value: "timeout pattern", weight: 0.32 });
-  }
+// 3) Auth failures (401/403/unauthorized/forbidden)
+else if (
+  text.includes(" 401") || text.includes("401 ") || text.includes("status 401") ||
+  text.includes(" 403") || text.includes("403 ") || text.includes("status 403") ||
+  text.includes("unauthorized") || text.includes("forbidden")
+) {
+  setOutcome(
+    "auth/permission",
+    0.80,
+    "high",
+    "escalate",
+    "Matched authentication/authorization markers (401/403/unauthorized/forbidden)."
+  );
+  if (text.includes("401") || text.includes("status 401")) addEvidence("status_code", "401", 0.35);
+  if (text.includes("403") || text.includes("status 403")) addEvidence("status_code", "403", 0.35);
+  if (text.includes("unauthorized")) addEvidence("keyword_match", "unauthorized", 0.25);
+  if (text.includes("forbidden")) addEvidence("keyword_match", "forbidden", 0.25);
+  addEvidence("heuristic", "authz/authn failure", 0.20);
+}
 
-  // Action signal mapping
-  let actionSignal = "review";
-  if (classification.startsWith("auth/")) actionSignal = "escalate";
-  if (classification.startsWith("runtime/syntax")) actionSignal = "review";
-  if (classification.startsWith("network/timeout")) actionSignal = "review";
+// 4) Out of memory / heap
+else if (text.includes("out of memory") || text.includes("heap out of memory") || text.includes("javascript heap")) {
+  setOutcome(
+    "runtime/memory",
+    0.82,
+    "high",
+    "escalate",
+    "Matched memory exhaustion markers (out of memory/heap)."
+  );
+  if (text.includes("heap out of memory")) addEvidence("keyword_match", "heap out of memory", 0.45);
+  if (text.includes("out of memory")) addEvidence("keyword_match", "out of memory", 0.35);
+  if (text.includes("javascript heap")) addEvidence("keyword_match", "javascript heap", 0.25);
+  addEvidence("heuristic", "process memory limit exceeded", 0.20);
+}
 
-  let confidenceRationale = "Matched timeout keyword in error text.";
+// 5) Missing module / dependency
+else if (
+  text.includes("cannot find module") ||
+  text.includes("module not found") ||
+  text.includes("modulenotfounderror") || // python
+  text.includes("no module named")        // python
+) {
+  setOutcome(
+    "runtime/dependency",
+    0.74,
+    "medium",
+    "review",
+    "Matched missing dependency markers (cannot find module/module not found/no module named)."
+  );
+  if (text.includes("cannot find module")) addEvidence("keyword_match", "cannot find module", 0.40);
+  if (text.includes("module not found")) addEvidence("keyword_match", "module not found", 0.30);
+  if (text.includes("no module named")) addEvidence("keyword_match", "no module named", 0.35);
+  if (text.includes("modulenotfounderror")) addEvidence("keyword_match", "ModuleNotFoundError", 0.35);
+  addEvidence("heuristic", "dependency resolution failure", 0.20);
+}
+
+// 6) Syntax errors
+else if (text.includes("syntaxerror") || text.includes("unexpected token") || text.includes("missing initializer")) {
+  setOutcome(
+    "runtime/syntax",
+    0.76,
+    "medium",
+    "review",
+    "Matched syntax/parsing markers (SyntaxError/unexpected token/missing initializer)."
+  );
+  if (text.includes("syntaxerror")) addEvidence("keyword_match", "SyntaxError", 0.45);
+  if (text.includes("unexpected token")) addEvidence("keyword_match", "unexpected token", 0.30);
+  if (text.includes("missing initializer")) addEvidence("keyword_match", "missing initializer", 0.30);
+  addEvidence("heuristic", "parsing failure", 0.20);
+}
+
+// Ensure evidence is never empty on unknown (keeps output consistent)
+if (classification === "unknown") {
+  addEvidence("weak_pattern_match", "no strong markers found", 0.10);
+  actionSignal = "review";
+  severity = "low";
+}
+
+// end here
 
   // Explanation + next step (keep short)
   const explanationMap = {
