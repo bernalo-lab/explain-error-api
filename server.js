@@ -4,19 +4,42 @@ import cors from "cors";
 const app = express();
 app.use(express.json({ limit: "1mb" }));
 
+// Version
+app.use((req, res, next) => {
+  res.setHeader("X-ExplainError-Version", "1.0.0");
+  next();
+});
+
+
+
 // CORS: allow your GitHub Pages + localhost
+// CORS: allow known frontends + optionally additional origins via env
+// Add more at deploy time with: CORS_ORIGINS="https://yourdomain.com,https://another.com"
+const defaultOrigins = [
+  "https://bernalo-lab.github.io",
+  "http://localhost:5500",
+  "http://127.0.0.1:5500"
+];
+
+const envOrigins = String(process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(new Set([...defaultOrigins, ...envOrigins]));
+
 app.use(
   cors({
-    origin: [
-      "https://bernalo-lab.github.io",
-      "http://localhost:5500",
-      "http://127.0.0.1:5500"
-    ],
+    origin: (origin, cb) => {
+      // Allow non-browser clients (curl/postman) with no Origin header
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error(`CORS blocked for origin: ${origin}`));
+    },
     methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
-
 // Adding a friendly GET / route
 app.get("/", (req, res) => {
   res.status(200).send("ExplainError API is running. Try GET /health or POST /v1/explain-error");
@@ -24,6 +47,75 @@ app.get("/", (req, res) => {
 
 // Health check (useful for Render)
 app.get("/health", (req, res) => res.json({ ok: true }));
+
+// Example payloads for quick testing
+app.get("/v1/examples", (req, res) => {
+  res.json({
+    description: "Sample error payloads for testing /v1/explain-error",
+    examples: [
+      {
+        name: "Connection Refused",
+        payload: {
+          text: "Error: connect ECONNREFUSED 10.0.0.5:5432"
+        }
+      },
+      {
+        name: "Timeout",
+        payload: {
+          text: "Request failed with ETIMEDOUT after 30000ms"
+        }
+      },
+      {
+        name: "Authentication Failure",
+        payload: {
+          text: "HTTP 401 Unauthorized: invalid access token"
+        }
+      },
+      {
+        name: "Out of Memory",
+        payload: {
+          text: "FATAL ERROR: JavaScript heap out of memory"
+        }
+      },
+      {
+        name: "Missing Module",
+        payload: {
+          text: "Error: Cannot find module 'express'"
+        }
+      }
+    ]
+  });
+});
+
+// Return current response schema
+app.get("/v1/schema", (req, res) => {
+  res.json({
+    description: "Current response structure for POST /v1/explain-error",
+    requestShape: {
+      text: "string (preferred)",
+      rawError: "string (alias)",
+      error: "string (alias)",
+      message: "string (alias)",
+      stack: "string (optional)"
+    },
+    responseShape: {
+      classification: "string (e.g. network/timeout, auth/permission)",
+      confidence: "number (0.0 – 1.0)",
+      confidenceRationale: "string",
+      severity: "string (low | medium | high)",
+      evidence: [
+        {
+          type: "string (e.g. keyword_match, status_code, heuristic)",
+          value: "string",
+          weight: "number"
+        }
+      ],
+      actionSignal: "string (auto_retry | review | escalate)",
+      explanation: "string",
+      recommendedNextStep: "string"
+    }
+  });
+});
 
 // MVP endpoint expected by your static page
 app.post("/v1/explain-error", (req, res) => {
@@ -68,7 +160,7 @@ if (text.includes("etimedout") || text.includes("timed out") || text.includes("t
     "network/timeout",
     0.72,
     "medium",
-    "review",
+    "auto_retry",
     "Matched timeout markers (ETIMEDOUT/timeout) in error text."
   );
   if (text.includes("etimedout")) addEvidence("keyword_match", "ETIMEDOUT", 0.40);
