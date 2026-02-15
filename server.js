@@ -12,7 +12,7 @@ app.use(
       "http://localhost:5500",
       "http://127.0.0.1:5500"
     ],
-    methods: ["GET", "POST", "OPTIONS"]
+    methods: ["GET", "POST", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
   })
 );
