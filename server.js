@@ -12,7 +12,7 @@ app.use(
       "http://localhost:5500",
       "http://127.0.0.1:5500"
     ],
-    methods: ["POST", "OPTIONS"],
+    methods: ["GET", "POST", "OPTIONS"]
     allowedHeaders: ["Content-Type", "Authorization"]
   })
 );
@@ -42,7 +42,6 @@ app.post("/v1/explain-error", (req, res) => {
   console.log("Incoming:", { hasText: !!req.body?.text, hasContext: !!req.body?.context });
 
 
-// star here
 // ---- classification heuristics (MVP) ----
 const text = (raw + " " + stack).toLowerCase();
 
@@ -91,8 +90,25 @@ else if (text.includes("econnrefused") || text.includes("connection refused")) {
   if (text.includes("connection refused")) addEvidence("keyword_match", "connection refused", 0.30);
   addEvidence("heuristic", "socket connect failure", 0.25);
 }
+// 3) Dependency/service unavailable (503)
+else if (
+  text.includes(" 503") || text.includes("503 ") || text.includes("status 503") ||
+  text.includes("service unavailable") || text.includes("downstream dependency failed")
+) {
+  setOutcome(
+    "dependency/unavailable",
+    0.77,
+    "high",
+    "review",
+    "Matched downstream outage markers (503/service unavailable)."
+  );
+  if (text.includes("503") || text.includes("status 503")) addEvidence("status_code", "503", 0.35);
+  if (text.includes("service unavailable")) addEvidence("keyword_match", "service unavailable", 0.30);
+  if (text.includes("downstream dependency failed")) addEvidence("keyword_match", "downstream dependency failed", 0.30);
+  addEvidence("heuristic", "dependency outage", 0.25);
+}
 
-// 3) Auth failures (401/403/unauthorized/forbidden)
+// 4) Auth failures (401/403/unauthorized/forbidden)
 else if (
   text.includes(" 401") || text.includes("401 ") || text.includes("status 401") ||
   text.includes(" 403") || text.includes("403 ") || text.includes("status 403") ||
@@ -112,7 +128,7 @@ else if (
   addEvidence("heuristic", "authz/authn failure", 0.20);
 }
 
-// 4) Out of memory / heap
+// 5) Out of memory / heap
 else if (text.includes("out of memory") || text.includes("heap out of memory") || text.includes("javascript heap")) {
   setOutcome(
     "runtime/memory",
@@ -127,7 +143,7 @@ else if (text.includes("out of memory") || text.includes("heap out of memory") |
   addEvidence("heuristic", "process memory limit exceeded", 0.20);
 }
 
-// 5) Missing module / dependency
+// 6) Missing module / dependency
 else if (
   text.includes("cannot find module") ||
   text.includes("module not found") ||
@@ -148,7 +164,7 @@ else if (
   addEvidence("heuristic", "dependency resolution failure", 0.20);
 }
 
-// 6) Syntax errors
+// 7) Syntax errors
 else if (text.includes("syntaxerror") || text.includes("unexpected token") || text.includes("missing initializer")) {
   setOutcome(
     "runtime/syntax",
@@ -170,8 +186,6 @@ if (classification === "unknown") {
   severity = "low";
 }
 
-// end here
-
   // Explanation + next step (keep short)
   const explanationMap = {
     "network/timeout": "Likely a timeout between services (dependency latency or network path issue).",
@@ -180,7 +194,8 @@ if (classification === "unknown") {
     "runtime/dependency": "Missing dependency/module or incorrect runtime packaging/build output.",
     "runtime/memory": "Process exceeded memory limits (leak, large payload, or insufficient memory allocation).",
     "runtime/syntax": "Syntax error during parsing/execution (bad deploy artifact or incompatible runtime).",
-    "unknown": "Not enough signal to classify confidently from the provided text."
+    "dependency/unavailable": "A downstream dependency is unavailable (outage, overload, or deployment issue).",
+    "unknown": "Not enough signal to classify confidently from the provided text."    
   };
 
   const nextStepMap = {
@@ -190,6 +205,7 @@ if (classification === "unknown") {
     "runtime/dependency": "Confirm build artifact includes dependencies; verify bundling and runtime path.",
     "runtime/memory": "Check memory limits, recent payload changes, and heap usage trends.",
     "runtime/syntax": "Inspect the deployed build artifact; validate runtime/node version compatibility.",
+    "dependency/unavailable": "Check dependency health, incident status, load, and recent deploys; add retries/backoff if safe.",
     "unknown": "Provide stack trace + environment + component name to improve classification."
   };
 
